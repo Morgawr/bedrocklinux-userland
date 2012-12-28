@@ -2,18 +2,20 @@
 /* It performs consistency checks on files */
 /* TODO: Add GPL here */
 
+#define _GNU_SOURCE
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <fcntl.h>
 #include <errno.h>
-#include <unistd.h>
 #include <syslog.h>
 #include <string.h>
 #include <sys/param.h>
 #include <sys/inotify.h>
 #include <sys/time.h>
+#include <sys/sendfile.h>
+#include <unistd.h>
 
 /* configuration file mapping clients to their path */
 #define BRCLIENTSCONF "/bedrock/etc/brclients.conf"
@@ -28,8 +30,8 @@
 #define EVENT_BUF_SIZE (1024*EVENT_SIZE+16)
 
 struct br_client {
-	char name[CLIENT_NAME_MAX];
-	char chroot[PATH_MAX];
+	char *name;
+	char *chroot;
 };
 
 /* TODO: I might want to roll out a simple list implementation
@@ -99,9 +101,10 @@ struct br_file_graph* add_graph_nodes(int *fd)
 			if (snprintf(wholename, namelength, "%s%s", client->chroot, base) < 0)
 				return NULL;
 			graph_it->fd_parent = fd;
-			graph_it->wd = inotify_add_watch(*fd, wholename, IN_DELETE);
-			if (graph_it->wd < 0)
+			graph_it->wd = inotify_add_watch(*fd, wholename, IN_DELETE_SELF);
+			if (graph_it->wd < 0){
 				return NULL;
+			}
 			graph_it->filename = wholename;
 			graph_it->client = client;
 			graph_it->siblings = NULL;
@@ -142,7 +145,7 @@ int copy_over(int fd_src, char *dest, off_t size, mode_t mode)
 	if (unlink(dest) < 0 && errno != ENOENT) 
 		return -1;
 
-	fd_dest = open(dest, O_CREAT | O_WRONLY, mode);
+	int fd_dest = open(dest, O_CREAT | O_WRONLY, mode);
 	if (fd_dest < 0)
 		return -1;
 	
@@ -154,7 +157,8 @@ int copy_over(int fd_src, char *dest, off_t size, mode_t mode)
 	 * patch it accordingly and use traditional read/write operations.
 	 * XXX: add #ifdef for compile time options
 	 */
-	int res = sendfile(fd_src, fd_dest, NULL, size);
+	off_t offset = 0; /* this rewinds the file */
+	int res = sendfile(fd_src, fd_dest, &offset, size);
 	close(fd_dest);
 	return res; /* No error checking because we return either way :) */
 }
@@ -174,14 +178,13 @@ int propagate_event(int fd, int wd, struct br_file_graph *root)
 		iterator = iterator->next;
 	} while(iterator != NULL);
 
-	if (iterator == NULL || (*iterator->fd != fd)) {
+	if (iterator == NULL || (*iterator->fd_parent != fd)) {
 		/* Inconsistency error, this shouldn't happen so we just 
 		 * set errno and return.
 		 * TODO: set errno
 		 */
 		return -1;
 	}
-
 	/* Now we found the file that got modified, we need to loop through 
 	 * the rest of the data, perform consistency checks and re-link
 	 * all the new inodes to the inotify watcher.
@@ -189,12 +192,10 @@ int propagate_event(int fd, int wd, struct br_file_graph *root)
 	struct br_file_graph *sibling = iterator->siblings;
 	
 	/* First we add the new file to our inotify instance */
-	if (inotify_rm_watch(fd, iterator->wd) < 0)
-		return -1;
-	iterator->wd = inotify_add_watch(fd, iterator->filename, IN_DELETE);
+	iterator->wd = inotify_add_watch(fd, iterator->filename, IN_DELETE_SELF);
 	if (iterator->wd < 0) 
 		return -1;
-	
+
 	/* We need to obtain the size of the new file and open it, ready for
 	 * copy
 	 */
@@ -204,6 +205,7 @@ int propagate_event(int fd, int wd, struct br_file_graph *root)
 	int iter_fd = open(iterator->filename, O_RDONLY);
 	if (iter_fd < 0)
 		return -1;
+
 
 	while (iterator != sibling) {
 		if (inotify_rm_watch(fd, sibling->wd) < 0) {
@@ -215,7 +217,7 @@ int propagate_event(int fd, int wd, struct br_file_graph *root)
 		 * the previosly tracked ones.
 		 */
 		int res = copy_over(iter_fd, sibling->filename, buf.st_size, buf.st_mode);
-		sibling->wd = inotify_add_watch(fd, sibling->filename, IN_DELETE);
+		sibling->wd = inotify_add_watch(fd, sibling->filename, IN_DELETE_SELF);
 		sibling = sibling->siblings;
 	}
 
@@ -242,14 +244,13 @@ int dispatch_inotify(int fd, struct br_file_graph *root)
 	if (length < 0)
 		return -1;
 	while (i < length) {
-		struct inotify_event *event = (struct inotify_event)&buffer[i];
-		if (event->len && (event->maxk & IN_DELETE)) {
+		struct inotify_event *event = (struct inotify_event *)&buffer[i];
+		if (event->mask & IN_DELETE_SELF) {
 			if (propagate_event(fd, event->wd, root) < 0) {
 				return -1;
 			}
 		}
 		i += EVENT_SIZE + event->len;
-
 	}
 	return 0;
 }
@@ -289,26 +290,12 @@ int break_out_of_chroot()
 /* Opens an inotify watcher on each watched file, returns the number of
  * instances created
  */
-int init_bedrock_inotify(int **instances)
-{
-	struct br_file_list *iterator = watched;
-	int count = 0;
-	/* XXX: Not even sure if double pointers are required */
-	int *inst = *instances;
-	while (iterator != NULL) {
-		count++;
-		iterator = iterator->next;
-	}
-
-	inst = malloc(sizeof(int)*count); 
-	for (int i = 0; i < count; i++) {
-		inst[i] = inotify_init();
-		if (inst[i] < 0)
-			return -1; /* error */
-	}
-
-	return count;
-}
+//int init_bedrock_inotify(int *instances)
+//{
+//}
+//
+//	return count;
+//}
 
 int main(int argc, const char *argv[])
 {
@@ -325,43 +312,43 @@ int main(int argc, const char *argv[])
 	 * for inotify watchers
 	 */
 	int *inotify_instances = NULL;
-	int inotify_count;
+	int inotify_count = 0;
 
 	/* Fork parent to detach from terminal */
-	pid = fork();
-	if (pid < 0) {
-		perror("fork()");
-		exit(EXIT_FAILURE);
-	}
+	//pid = fork();
+	//if (pid < 0) {
+	//	perror("fork()");
+	//	exit(EXIT_FAILURE);
+	//}
 
-	/* Kill off the parent */
-	if (pid > 0) {
-		exit(EXIT_SUCCESS);
-	}
+	///* Kill off the parent */
+	//if (pid > 0) {
+	//	exit(EXIT_SUCCESS);
+	//}
 
-	umask(0);
+	//umask(0);
 
 	/* TODO: Open logging facility here */
 
-	sid = setsid();
-	if (sid < 0) {
-		exit_status = EXIT_FAILURE;
-		/* TODO: log failure */
-		goto exit_close;
-	}
+	//sid = setsid();
+	//if (sid < 0) {
+	//	exit_status = EXIT_FAILURE;
+	//	/* TODO: log failure */
+	//	goto just_exit;
+	//}
 
 	/* Exit bedrock's chroot, we need to operate from the
 	 * native client! */
-	if (break_out_of_chroot() < 0) {
-		/* TODO: obtain errno and log */
-		exit_status = EXIT_FAILURE;
-		goto exit_close;
-	}
+	//if (break_out_of_chroot() < 0) {
+	//	/* TODO: obtain errno and log */
+	//	exit_status = EXIT_FAILURE;
+	//	goto just_exit;
+	//}
 
 	/* Close standard streams */
-	close(STDIN_FILENO);
-	close(STDOUT_FILENO);
-	close(STDERR_FILENO);
+	//close(STDIN_FILENO);
+	//close(STDOUT_FILENO);
+	//close(STDERR_FILENO);
 
 	/* Now we should be chdir'd to the original root, we can start
 	 * working on the filesystem, we need to setup all the inotify
@@ -382,30 +369,46 @@ int main(int argc, const char *argv[])
 	clients = malloc(sizeof(*clients));
 	clients->data = malloc(sizeof(*clients->data));
 	clients->next = NULL;
-	clients->data->name = "bedrock";
-	clients->data->chroot = "/var/chroot/bedrock";
+	if (asprintf(&clients->data->name, "bedrock") < 0)
+		goto exit_free;
+	if (asprintf(&clients->data->chroot, "/var/chroot/bedrock") < 0)
+		goto exit_free;
 
 	{ /* making a temporary block so we do not pollute the scope */
 		struct br_client_list *temp = malloc(sizeof(*temp));
 		clients->next = temp;
 		temp->data = malloc(sizeof(*temp->data));
 		temp->next = NULL;
-		temp->data->name = "wheezy";
-		temp->data->chroot = "/var/chroot/wheezy";
+		if (asprintf(&temp->data->name, "wheezy") < 0)
+			goto exit_free;
+		if (asprintf(&temp->data->chroot, "/var/chroot/wheezy") < 0)
+			goto exit_free;
 
 		temp = malloc(sizeof(*temp));
 		clients->next->next = temp;
 		temp->data = malloc(sizeof(*temp->data));
 		temp->next = NULL;
-		temp->data->name = "arch";
-		temp->data->chroot = "/var/chroot/arch";
+		if (asprintf(&temp->data->name, "arch") < 0)
+			goto exit_free;
+		if (asprintf(&temp->data->chroot, "/var/chroot/arch") < 0)
+			goto exit_free;
 	}
 
 	/* Init inotify */
-	inotify_count = init_bedrock_inotify(&inotify_instances);
-	if (inotify_count < 0) {
-		/* TODO obtain errno and log */
-		goto exit_free;
+	struct br_file_list *iterator = watched;
+	inotify_count = 0;
+	while (iterator != NULL) {
+		inotify_count++;
+		iterator = iterator->next;
+	}
+
+	inotify_instances = malloc(sizeof(int)*inotify_count); 
+	for (int i = 0; i < inotify_count; i++) {
+		inotify_instances[i] = inotify_init();
+		if (inotify_instances[i] < 0) {
+			/* TODO obtain errno and log */
+			goto exit_free;
+		}
 	}
 
 	file_network = add_graph_nodes(inotify_instances);
@@ -418,12 +421,12 @@ int main(int argc, const char *argv[])
 	fd_set fds;
 	FD_ZERO(&fds);
 	for(int i = 0; i < inotify_count; i++)
-		FD_SET(inotify_instances[i]);
+		FD_SET(inotify_instances[i],&fds);
 
 	/* Enter infinite loop for daemon */
 	for (;;) {
 		fd_set fds_copy;
-		FD_COPY(&fds, &fds_copy);
+		memcpy(&fds_copy, &fds, sizeof(fd_set));
 		int nfds = inotify_instances[inotify_count-1]+1;
 		int retval = select(nfds, &fds_copy, NULL, NULL, NULL);
 		
@@ -451,8 +454,8 @@ int main(int argc, const char *argv[])
 /* If something goes wrong and we need to exit the daemon */
 exit_inotify:
 
-	for(struct br_file_graph tmp = file_network; tmp != NULL; tmp = tmp->next) {
-		inotify_rm_watch(*tmp->fd, tmp->wd);
+	for(struct br_file_graph *tmp = file_network; tmp != NULL; tmp = tmp->next) {
+		inotify_rm_watch(*tmp->fd_parent, tmp->wd);
 	}
 
 	/* Close inotify instances */
@@ -487,14 +490,14 @@ exit_free:
 	while (clients != NULL) {
 		struct br_client_list *p = clients;
 		clients = clients->next;
+		free(p->data->name);
+		free(p->data->chroot);
 		free(p->data);
 		free(p);
 	}
 
-exit_close:
-	/* Close all open files here */
-
 just_exit:
+	perror("error");
 	exit(exit_status);
 }
 
