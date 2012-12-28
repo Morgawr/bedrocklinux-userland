@@ -55,9 +55,13 @@ struct br_client_list {
  *
  * Keep in mind that "next" points to a non-circular list (last element is 
  * NULL) whereas "siblings" points to a circular list.
+ *
+ * XXX: Heuristically it might be even better to use "next" as a circular
+ * 	list with a lot of jumping around. That would make the whole process'
+ * 	memory more dynamic and react better with event distribution.
  */
 struct br_file_graph {
-	int *fd_parent; /* Inotify watching this */
+	int *fd_parent; /* Inotify watching this XXX: maybe remove pointer */
 	int wd; /* Inotify watch descriptor */
 	char *filename; /* File reference */
 	struct br_client *client; /* Chroot'd client identifier */
@@ -130,7 +134,47 @@ struct br_file_graph* add_graph_nodes(int *fd)
 int propagate_event(int fd, int wd, struct br_file_graph *root)
 {
 	/* Let's look for the file in our graph */
+	struct br_file_graph *iterator = root;
+	do {
+		if (iterator->wd == wd) /* found! */
+			break;
+		iterator = iterator->next;
+	} while(iterator != NULL);
 
+	if (iterator == NULL || (*iterator->fd != fd)) {
+		/* Inconsistency error, this shouldn't happen so we just 
+		 * set errno and return.
+		 * TODO: set errno
+		 */
+		return -1;
+	}
+
+	/* Now we found the file that got modified, we need to loop through 
+	 * the rest of the data, perform consistency checks and re-link
+	 * all the new inodes to the inotify watcher.
+	 */
+	struct br_file_graph *sibling = iterator->siblings;
+	
+	/* First we add the new file to our inotify instance */
+	if (inotify_rm_watch(fd, iterator->wd) < 0)
+		return -1;
+	iterator->wd = inotify_add_watch(fd, iterator->filename, IN_DELETE);
+	if (iterator->wd < 0) 
+		return -1;
+	while (iterator != sibling) {
+		if (inotify_rm_watch(fd, sibling->wd) < 0)
+			return -1;
+		/* Here we need to perform the syncing
+		 * and move the newly modified file over 
+		 * the previosly tracked ones.
+		 */
+		/* TODO: SYNCING */
+		sibling->wd = inotify_add_watch(fd, sibling->filename, IN_DELETE);
+		sibling = sibling->siblings;
+	}
+	
+	/* aaaand.. done! */
+	return 0;
 }
 
 /* Handle the event that a monitored file has been changed. 
