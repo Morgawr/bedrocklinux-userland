@@ -126,6 +126,39 @@ struct br_file_graph* add_graph_nodes(int *fd)
 	return root;
 }
 
+/* This functions copies the source onto the destination removing the original
+ * target and overwriting it (if it existed before).
+ * fd_src is the file descriptor previously open and dest is the string
+ * representing the pathname of the destination.
+ * Source is represented with a file descriptor because we only need to 
+ * open it once, making it perform better on subsequient calls.
+ * Returns -1 on error.
+ */
+int copy_over(int fd_src, char *dest, off_t size, mode_t mode) 
+{
+	/* Remove the old file, if errno is ENOENT we don't really care
+	 * since we're going to write in its place.
+	 */
+	if (unlink(dest) < 0 && errno != ENOENT) 
+		return -1;
+
+	fd_dest = open(dest, O_CREAT | O_WRONLY, mode);
+	if (fd_dest < 0)
+		return -1;
+	
+	/* Let's start copying everything */
+
+	/* NOTE!! sendfile() syscall works this way only on linux with
+	 * kernel >2.6.33 -see sendfile(2)-. If you're trying to use this
+	 * daemon on an older kernel or on a different OS please
+	 * patch it accordingly and use traditional read/write operations.
+	 * XXX: add #ifdef for compile time options
+	 */
+	int res = sendfile(fd_src, fd_dest, NULL, size);
+	close(fd_dest);
+	return res; /* No error checking because we return either way :) */
+}
+
 
 /* Operates on the watch descriptor handling the event of a file being 
  * modified.
@@ -161,18 +194,32 @@ int propagate_event(int fd, int wd, struct br_file_graph *root)
 	iterator->wd = inotify_add_watch(fd, iterator->filename, IN_DELETE);
 	if (iterator->wd < 0) 
 		return -1;
+	
+	/* We need to obtain the size of the new file and open it, ready for
+	 * copy
+	 */
+	struct stat buf;
+	if (stat(iterator->filename, &buf) < 0)
+		return -1;
+	int iter_fd = open(iterator->filename, O_RDONLY);
+	if (iter_fd < 0)
+		return -1;
+
 	while (iterator != sibling) {
-		if (inotify_rm_watch(fd, sibling->wd) < 0)
+		if (inotify_rm_watch(fd, sibling->wd) < 0) {
+			close(iter_fd);
 			return -1;
+		}
 		/* Here we need to perform the syncing
 		 * and move the newly modified file over 
 		 * the previosly tracked ones.
 		 */
-		/* TODO: SYNCING */
+		int res = copy_over(iter_fd, sibling->filename, buf.st_size, buf.st_mode);
 		sibling->wd = inotify_add_watch(fd, sibling->filename, IN_DELETE);
 		sibling = sibling->siblings;
 	}
-	
+
+	close(iter_fd);
 	/* aaaand.. done! */
 	return 0;
 }
