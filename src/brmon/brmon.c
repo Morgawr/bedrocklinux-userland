@@ -15,6 +15,7 @@
 #include <sys/inotify.h>
 #include <sys/time.h>
 #include <sys/sendfile.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 /* configuration file mapping clients to their path */
@@ -129,38 +130,80 @@ struct br_file_graph* add_graph_nodes(int *fd)
 	return root;
 }
 
-/* This functions copies the source onto the destination removing the original
- * target and overwriting it (if it existed before).
- * fd_src is the file descriptor previously open and dest is the string
- * representing the pathname of the destination.
- * Source is represented with a file descriptor because we only need to 
- * open it once, making it perform better on subsequient calls.
+/* This functions copies the new file (src) over the old one (dest).
+ * At the moment it is implemented by spawning a child process to handle 
+ * the copy. It is not as fast as a native copy but it is more stable (atm).
  * Returns -1 on error.
+ * XXX: Change this to use a better copy
  */
-int copy_over(int fd_src, char *dest, off_t size, mode_t mode) 
+int copy_over(char *src, char *dest) 
 {
-	/* Remove the old file, if errno is ENOENT we don't really care
-	 * since we're going to write in its place.
-	 */
-	if (unlink(dest) < 0 && errno != ENOENT) 
-		return -1;
-
-	int fd_dest = open(dest, O_CREAT | O_WRONLY, mode);
-	if (fd_dest < 0)
-		return -1;
+	int child_exit;
+	pid_t pid;
 	
-	/* Let's start copying everything */
+	pid = fork();
 
-	/* NOTE!! sendfile() syscall works this way only on linux with
-	 * kernel >2.6.33 -see sendfile(2)-. If you're trying to use this
-	 * daemon on an older kernel or on a different OS please
-	 * patch it accordingly and use traditional read/write operations.
-	 * XXX: add #ifdef for compile time options
-	 */
-	off_t offset = 0; /* this rewinds the file */
-	int res = sendfile(fd_src, fd_dest, &offset, size);
-	close(fd_dest);
-	return res; /* No error checking because we return either way :) */
+	if (pid == 0) { /* child */
+		execl("/bin/cp", "/bin/cp", src, dest, (char *)0);
+	}
+	else if (pid < 0){
+		return -1;
+	}
+	else {
+		pid_t wait = waitpid(pid, &child_exit, WNOHANG);
+		if (wait == -1) {
+			return -1;
+		}
+
+		if (WIFEXITED(child_exit)) {
+			return WEXITSTATUS(child_exit);
+		}
+		else if (WIFSIGNALED(child_exit) || WIFSTOPPED(child_exit)) {
+			/* TODO: need to manually set errno here */
+			return -1;
+		}
+	}
+
+	return -1;
+
+	
+	///* Remove the old file, if errno is ENOENT we don't really care
+	// * since we're going to write in its place.
+	// */
+
+	//if (unlink(dest) < 0 && errno != ENOENT) {
+	//	return -1;
+	//}
+
+	//struct stat buf;
+	//if (stat(src, &buf) < 0)
+	//	return -1;
+
+
+	//int fd_dest = open(dest, O_CREAT | O_WRONLY, buf.st_mode);
+	//if (fd_dest < 0)
+	//	return -1;
+
+	//int fd_src = open(src, O_RDONLY);
+	//if (fd_src < 0){
+	//	close(fd_dest);
+	//	return -1;
+	//}
+	//
+	//
+	///* Let's start copying everything */
+
+	///* NOTE!! sendfile() syscall works this way only on linux with
+	// * kernel >2.6.33 -see sendfile(2)-. If you're trying to use this
+	// * daemon on an older kernel or on a different OS please
+	// * patch it accordingly and use traditional read/write operations.
+	// * XXX: add #ifdef for compile time options
+	// */
+	//int res = sendfile(fd_src, fd_dest, NULL, buf.st_size);
+	//printf("%d\n",res);
+	//close(fd_dest);
+	//close(fd_src);
+	//return res; /* No error checking because we return either way :) */
 }
 
 
@@ -196,32 +239,20 @@ int propagate_event(int fd, int wd, struct br_file_graph *root)
 	if (iterator->wd < 0) 
 		return -1;
 
-	/* We need to obtain the size of the new file and open it, ready for
-	 * copy
-	 */
-	struct stat buf;
-	if (stat(iterator->filename, &buf) < 0)
-		return -1;
-	int iter_fd = open(iterator->filename, O_RDONLY);
-	if (iter_fd < 0)
-		return -1;
-
-
 	while (iterator != sibling) {
 		if (inotify_rm_watch(fd, sibling->wd) < 0) {
-			close(iter_fd);
 			return -1;
 		}
 		/* Here we need to perform the syncing
 		 * and move the newly modified file over 
 		 * the previosly tracked ones.
 		 */
-		int res = copy_over(iter_fd, sibling->filename, buf.st_size, buf.st_mode);
+		if (copy_over(iterator->filename, sibling->filename) < 0)
+			return -1;
 		sibling->wd = inotify_add_watch(fd, sibling->filename, IN_DELETE_SELF);
 		sibling = sibling->siblings;
 	}
 
-	close(iter_fd);
 	/* aaaand.. done! */
 	return 0;
 }
