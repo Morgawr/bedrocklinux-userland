@@ -151,7 +151,7 @@ int copy_over(char *src, char *dest)
 		return -1;
 	}
 	else {
-		pid_t wait = waitpid(pid, &child_exit, WNOHANG);
+		pid_t wait = waitpid(pid, &child_exit, 0);
 		if (wait == -1) {
 			return -1;
 		}
@@ -300,7 +300,6 @@ int init_clients()
 				memset(section,0,7);
 				memset(path,0,5);
 				memset(value,0,MAX_LINE); 
-				printf("Found %s at %s\n", temp->data->name, temp->data->chroot);
 				temp->next = malloc(sizeof(*temp));
 				temp->next->data = NULL;
 				temp->next->next = NULL;
@@ -349,6 +348,112 @@ exit_read:
 	return retval;
 }
 
+/* This function should be called before creating the graph nodes for
+ * the file network. It makes sure the filesystem is consistent between
+ * all clients and that all clients are at the most recent sync version.
+ * Return -1 in case of failure (for example a tracked file doesn't exit
+ * in *ANY* client.
+ */
+int sync_filesystem() {
+	int client_num = 0;
+	struct br_client_list *client_it = clients;
+	while (client_it != NULL) {
+		++client_num; /* Count how many clients we need to check */
+		client_it = client_it->next; 
+	}
+
+	struct br_file_list *file_it = watched;
+	while (file_it != NULL) {
+		char *siblings[client_num];
+		int exists[client_num];
+		char *base = file_it->filename;
+		client_it = clients;
+		memset(siblings, 0, sizeof(char*)*client_num); /* Make sure they are NULL */
+		memset(exists, 0, sizeof(int)*client_num);
+		int i = 0;
+		while (client_it != NULL) {
+			/* Obtain the filename and check for existence */
+			struct br_client *client = client_it->data;
+			char *wholename = NULL;
+			int namelength = strlen(base)+strlen(client->chroot);
+			++namelength; /* for NULL terminator */
+			wholename = malloc(sizeof(char)*namelength);
+			if (wholename == NULL)
+				return -1;
+			if (snprintf(wholename, namelength, "%s%s", client->chroot, base) < 0)
+				return -1;
+			siblings[i] = wholename;
+			struct stat buf;
+			if (stat(wholename, &buf) < 0) {
+				if (errno != ENOENT)
+					return -1;
+				/* If errno is ENOENT then the file doesn't 
+				 * exist so we don't have to report it on
+				 * the array, it's already set to 0.
+				 */
+				syslog(LOG_NOTICE, "File %s doesn't exist.", wholename);
+			}
+			else {
+				exists[i] = 1;
+			}
+			++i;
+			client_it = client_it->next;
+		}
+
+		/* Now we have a list of all the siblings for the current
+		 * file_it, we should check all the existing ones and find
+		 * the one that has the most recent modification date, then
+		 * sync it with the others.
+		 * XXX: this policy is a bit nazi, will have to go back to it
+		 *	and see if it's possible to do some diff'ing.
+		 */
+		time_t date = 0;
+		char *filename = NULL;
+
+		for (i = 0; i < client_num; i++) {
+			if (!exists[i])
+				continue;
+			struct stat buf;
+			if (stat(siblings[i], &buf) < 0) {
+				return -1;
+			}
+			if (buf.st_mtime > date) {
+				date = buf.st_mtime;
+				filename = siblings[i];
+			}
+		}
+		if (date == 0 || filename == NULL) {
+			/* The tracked file doesn't exist in any client */
+			errno = ENOENT;
+			return -1;
+		}
+
+		/* We do a second pass */
+		for (i = 0; i < client_num; i++) {
+			if (!exists[i]) {
+				if (copy_over(filename, siblings[i]) < 0)
+					return -1;
+				continue;
+			}
+			struct stat buf;
+			if (stat(siblings[i], &buf) < 0) {
+				return -1;
+			}
+			if (buf.st_mtime < date) {
+				if (copy_over(filename, siblings[i]) < 0)
+					return -1;
+			}
+		}
+
+		/* Let's free memory for next file iteration */
+		for (i = 0; i < client_num; i++) {
+			free(siblings[i]);
+		}
+		file_it = file_it->next;
+	}
+	return 0;
+}
+
 int main(int argc, const char *argv[])
 {
 	/* TODO: Use getopt to check params */
@@ -381,7 +486,7 @@ int main(int argc, const char *argv[])
 	umask(0);
 
 	openlog("brmon", LOG_PID | LOG_NDELAY, LOG_DAEMON);
-	syslog(LOG_INFO, "daemon started.");
+	syslog(LOG_INFO, "Daemon started.");
 
 	sid = setsid();
 	if (sid < 0) {
@@ -432,6 +537,14 @@ int main(int argc, const char *argv[])
 			syslog(LOG_ERR, "%s. Unable to start inotify instances", strerror(errno));
 			goto exit_free;
 		}
+	}
+
+	/* Check if all the sibling files exist, if they do not then
+	 * sync them all together using the most recent stat'd modification
+	 */
+	if (sync_filesystem() < 0) {
+		syslog(LOG_ERR, "%s. Unable to sync initialized siblings.", strerror(errno));
+		goto exit_free;
 	}
 
 	file_network = add_graph_nodes(inotify_instances);
