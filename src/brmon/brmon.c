@@ -29,6 +29,7 @@
 
 #define EVENT_SIZE (sizeof(struct inotify_event))
 #define EVENT_BUF_SIZE (1024*EVENT_SIZE+16)
+#define MAX_LINE 512
 
 struct br_client {
 	char *name;
@@ -286,47 +287,101 @@ int dispatch_inotify(int fd, struct br_file_graph *root)
 	return 0;
 }
 
-/* break out of chroot */
-/* NOTE: Taken from brc.c */
-int break_out_of_chroot()
+/* Function that populates the clients data reading from the br config file */
+int init_clients()
 {
-	/* go as high in the tree as possible */
-	chdir("/");
-	 /*
-	  * A check to ensure BRCLIENTSCONF exists (and is readable) has already
-	  * happened at this point.  Since it is within /bedrock, this means
-	  * /bedrock must exist.
-	  *
-	  * changing root dir to /bedrock while we're in / means we're out of the root
-	  * dir - ie, out of the chroot if we were previously in one.
-	  */
-	if(chroot("/bedrock") == -1){
+	FILE *fp = fopen(BRCLIENTSCONF,"r");
+	char line[MAX_LINE];
+	if (fp == NULL)
 		return -1;
-	}
-	/*
-	 * cd up until we hit the actual, absolute root directory.  we'll know
-	 * where there when the current and parent directorys both have the same
-	 * inode.
-	 */
-	struct stat stat_pwd;
-	struct stat stat_parent;
-	do {
-		chdir("..");
-		stat(".", &stat_pwd);
-		stat("..", &stat_parent);
-	} while(stat_pwd.st_ino != stat_parent.st_ino);
-	return 0;
-}
 
-/* Opens an inotify watcher on each watched file, returns the number of
- * instances created
- */
-//int init_bedrock_inotify(int *instances)
-//{
-//}
-//
-//	return count;
-//}
+	int in_client = 0; /* if we are in a client section */
+	int retval = 0;
+
+	/* We assume there is at least one client so we allocate the first one,
+	 * if this isn't the case then we obviously have a serious error 
+	 * here.
+	 */
+	clients = malloc(sizeof(*clients));
+	clients->data = NULL;
+	clients->next = NULL;
+	struct br_client_list *temp = clients;
+
+	/* This one stores "client" from sscanf */
+	char section[7];
+	/* This one stores "path" from sscanf */
+	char path[5];
+	/* This one stores the value read */
+	char value[MAX_LINE];
+
+	while (fgets(line, MAX_LINE, fp) != NULL) {
+		/* Check for [client "blah"] */
+		int res = sscanf(line," [%s %[^]]",section,value);
+		if (in_client && res != 0) {
+			errno = EINVAL;
+			retval = -1;
+			goto exit_read;
+		}
+
+		if (in_client && res == 0) { /* we look for "path = blah" */
+			res = sscanf(line, " %[^= ] = %s", path, value);
+			if (res != 0 && strncmp(path,"path",5) == 0) {
+				temp->data->chroot = malloc(sizeof(value)*strlen(value));
+				strncpy(temp->data->chroot, value, strlen(value));
+				
+				/* clean some stuff for next iteration */
+				in_client = 0;
+				memset(section,0,7);
+				memset(path,0,5);
+				memset(value,0,MAX_LINE); 
+				printf("Found %s at %s\n", temp->data->name, temp->data->chroot);
+				temp->next = malloc(sizeof(*temp));
+				temp->next->data = NULL;
+				temp->next->next = NULL;
+				temp = temp->next;
+			}
+
+			continue;
+		}
+
+		if (res == 0)
+			continue; /* failed match */
+
+
+		/* If we got this far, we found a match */
+		if (strncmp(section, "client", 7) == 0) {
+			if (strncmp(value, "", 1) == 0) {
+				errno = EINVAL;
+				retval = -1;
+				goto exit_read;
+			}
+			/* strip leading and trailing " */
+			char* target = value+1;
+			target[strlen(target)-1]='\0';
+			in_client = 1;
+			temp->data = malloc(sizeof(*temp->data));
+			temp->data->name = malloc(sizeof(target)*strlen(value));
+			strncpy(temp->data->name, target, strlen(target));
+		}
+	}
+
+	if (in_client) { /* Malformed config file */
+		errno = EINVAL;
+		retval = -1;
+		goto exit_read;
+	}
+
+	/* Perform sanity fix on client list */
+	struct br_client_list *box = clients;
+	while (box->next != temp)
+		box = box->next;
+	free(box->next);
+	box->next = NULL;
+
+exit_read:
+	fclose(fp);
+	return retval;
+}
 
 int main(int argc, const char *argv[])
 {
@@ -368,22 +423,13 @@ int main(int argc, const char *argv[])
 	//	goto just_exit;
 	//}
 
-	/* Exit bedrock's chroot, we need to operate from the
-	 * native client! */
-	//if (break_out_of_chroot() < 0) {
-	//	/* TODO: obtain errno and log */
-	//	exit_status = EXIT_FAILURE;
-	//	goto just_exit;
-	//}
-
 	/* Close standard streams */
 	//close(STDIN_FILENO);
 	//close(STDOUT_FILENO);
 	//close(STDERR_FILENO);
 
-	/* Now we should be chdir'd to the original root, we can start
-	 * working on the filesystem, we need to setup all the inotify
-	 * instances, but first we need to read from the config file
+	/* we need to setup all the inotify instances, 
+	 * but first we need to read from the config file
 	 * and discover all the clients available
 	 */
 
@@ -396,34 +442,41 @@ int main(int argc, const char *argv[])
 	watched->filename = malloc(strlen(FILENAME)+1);
 	sprintf(watched->filename,FILENAME);
 	#undef FILENAME
-	/* Temporarily initialize clients */
-	clients = malloc(sizeof(*clients));
-	clients->data = malloc(sizeof(*clients->data));
-	clients->next = NULL;
-	if (asprintf(&clients->data->name, "bedrock") < 0)
-		goto exit_free;
-	if (asprintf(&clients->data->chroot, "/var/chroot/bedrock") < 0)
-		goto exit_free;
 
-	{ /* making a temporary block so we do not pollute the scope */
-		struct br_client_list *temp = malloc(sizeof(*temp));
-		clients->next = temp;
-		temp->data = malloc(sizeof(*temp->data));
-		temp->next = NULL;
-		if (asprintf(&temp->data->name, "wheezy") < 0)
-			goto exit_free;
-		if (asprintf(&temp->data->chroot, "/var/chroot/wheezy") < 0)
-			goto exit_free;
-
-		temp = malloc(sizeof(*temp));
-		clients->next->next = temp;
-		temp->data = malloc(sizeof(*temp->data));
-		temp->next = NULL;
-		if (asprintf(&temp->data->name, "arch") < 0)
-			goto exit_free;
-		if (asprintf(&temp->data->chroot, "/var/chroot/arch") < 0)
-			goto exit_free;
+	/* Populate the clients structure */
+	if (init_clients() < 0) {
+		/* TODO: obtain errno and log */
+		goto exit_free;
 	}
+
+	///* Temporarily initialize clients */
+	//clients = malloc(sizeof(*clients));
+	//clients->data = malloc(sizeof(*clients->data));
+	//clients->next = NULL;
+	//if (asprintf(&clients->data->name, "bedrock") < 0)
+	//	goto exit_free;
+	//if (asprintf(&clients->data->chroot, "/var/chroot/bedrock") < 0)
+	//	goto exit_free;
+
+	//{ /* making a temporary block so we do not pollute the scope */
+	//	struct br_client_list *temp = malloc(sizeof(*temp));
+	//	clients->next = temp;
+	//	temp->data = malloc(sizeof(*temp->data));
+	//	temp->next = NULL;
+	//	if (asprintf(&temp->data->name, "wheezy") < 0)
+	//		goto exit_free;
+	//	if (asprintf(&temp->data->chroot, "/var/chroot/wheezy") < 0)
+	//		goto exit_free;
+
+	//	temp = malloc(sizeof(*temp));
+	//	clients->next->next = temp;
+	//	temp->data = malloc(sizeof(*temp->data));
+	//	temp->next = NULL;
+	//	if (asprintf(&temp->data->name, "arch") < 0)
+	//		goto exit_free;
+	//	if (asprintf(&temp->data->chroot, "/var/chroot/arch") < 0)
+	//		goto exit_free;
+	//}
 
 	/* Init inotify */
 	struct br_file_list *iterator = watched;
