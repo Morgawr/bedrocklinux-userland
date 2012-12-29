@@ -176,6 +176,10 @@ int copy_over(char *src, char *dest)
  */
 int propagate_event(int fd, int wd, struct br_file_graph *root)
 {
+	if (root == NULL) {
+		errno = EINVAL;
+		return -1;
+	}
 	/* Let's look for the file in our graph */
 	struct br_file_graph *iterator = root;
 	do {
