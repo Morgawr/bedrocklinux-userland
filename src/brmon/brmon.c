@@ -493,10 +493,11 @@ int main(int argc, const char *argv[])
 		goto just_exit;
 	}
 
-	/* Close standard streams */
-	close(STDIN_FILENO);
-	close(STDOUT_FILENO);
-	close(STDERR_FILENO);
+	/* Redirect standard streams to /dev/null */
+	int null_fd = open("/dev/null", O_WRONLY);
+	dup2(null_fd, STDIN_FILENO);
+	dup2(null_fd, STDOUT_FILENO);
+	dup2(null_fd, STDERR_FILENO);
 
 	/* we need to setup all the inotify instances, 
 	 * but first we need to read from the config file
@@ -633,6 +634,7 @@ exit_free:
 just_exit:
 	syslog(LOG_WARNING, "Daemon has been stopped. Client sync will not work.");
 	closelog();
+	close(null_fd);
 	exit(exit_status);
 }
 
