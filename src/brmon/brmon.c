@@ -14,9 +14,9 @@
 #include <sys/param.h>
 #include <sys/inotify.h>
 #include <sys/time.h>
-#include <sys/sendfile.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#include <syslog.h>
 
 /* configuration file mapping clients to their path */
 #define BRCLIENTSCONF "/bedrock/etc/brclients.conf"
@@ -160,51 +160,13 @@ int copy_over(char *src, char *dest)
 			return WEXITSTATUS(child_exit);
 		}
 		else if (WIFSIGNALED(child_exit) || WIFSTOPPED(child_exit)) {
-			/* TODO: need to manually set errno here */
+			errno = ECHILD;
 			return -1;
 		}
 	}
 
 	return -1;
 
-	
-	///* Remove the old file, if errno is ENOENT we don't really care
-	// * since we're going to write in its place.
-	// */
-
-	//if (unlink(dest) < 0 && errno != ENOENT) {
-	//	return -1;
-	//}
-
-	//struct stat buf;
-	//if (stat(src, &buf) < 0)
-	//	return -1;
-
-
-	//int fd_dest = open(dest, O_CREAT | O_WRONLY, buf.st_mode);
-	//if (fd_dest < 0)
-	//	return -1;
-
-	//int fd_src = open(src, O_RDONLY);
-	//if (fd_src < 0){
-	//	close(fd_dest);
-	//	return -1;
-	//}
-	//
-	//
-	///* Let's start copying everything */
-
-	///* NOTE!! sendfile() syscall works this way only on linux with
-	// * kernel >2.6.33 -see sendfile(2)-. If you're trying to use this
-	// * daemon on an older kernel or on a different OS please
-	// * patch it accordingly and use traditional read/write operations.
-	// * XXX: add #ifdef for compile time options
-	// */
-	//int res = sendfile(fd_src, fd_dest, NULL, buf.st_size);
-	//printf("%d\n",res);
-	//close(fd_dest);
-	//close(fd_src);
-	//return res; /* No error checking because we return either way :) */
 }
 
 
@@ -225,8 +187,8 @@ int propagate_event(int fd, int wd, struct br_file_graph *root)
 	if (iterator == NULL || (*iterator->fd_parent != fd)) {
 		/* Inconsistency error, this shouldn't happen so we just 
 		 * set errno and return.
-		 * TODO: set errno
 		 */
+		errno = EINVAL;
 		return -1;
 	}
 	/* Now we found the file that got modified, we need to loop through 
@@ -401,32 +363,32 @@ int main(int argc, const char *argv[])
 	int inotify_count = 0;
 
 	/* Fork parent to detach from terminal */
-	//pid = fork();
-	//if (pid < 0) {
-	//	perror("fork()");
-	//	exit(EXIT_FAILURE);
-	//}
+	pid = fork();
+	if (pid < 0) {
+		perror("fork()");
+		exit(EXIT_FAILURE);
+	}
 
-	///* Kill off the parent */
-	//if (pid > 0) {
-	//	exit(EXIT_SUCCESS);
-	//}
+	/* Kill off the parent */
+	if (pid > 0) {
+		exit(EXIT_SUCCESS);
+	}
 
-	//umask(0);
+	umask(0);
 
-	/* TODO: Open logging facility here */
+	openlog("brmon", LOG_PID | LOG_NDELAY, LOG_DAEMON);
 
-	//sid = setsid();
-	//if (sid < 0) {
-	//	exit_status = EXIT_FAILURE;
-	//	/* TODO: log failure */
-	//	goto just_exit;
-	//}
+	sid = setsid();
+	if (sid < 0) {
+		exit_status = EXIT_FAILURE;
+		syslog(LOG_ERR, "%s", strerror(errno));
+		goto just_exit;
+	}
 
 	/* Close standard streams */
-	//close(STDIN_FILENO);
-	//close(STDOUT_FILENO);
-	//close(STDERR_FILENO);
+	close(STDIN_FILENO);
+	close(STDOUT_FILENO);
+	close(STDERR_FILENO);
 
 	/* we need to setup all the inotify instances, 
 	 * but first we need to read from the config file
@@ -443,40 +405,12 @@ int main(int argc, const char *argv[])
 	sprintf(watched->filename,FILENAME);
 	#undef FILENAME
 
+
 	/* Populate the clients structure */
 	if (init_clients() < 0) {
-		/* TODO: obtain errno and log */
+		syslog(LOG_ERR, "%s. Unable to read clients.", strerror(errno));
 		goto exit_free;
 	}
-
-	///* Temporarily initialize clients */
-	//clients = malloc(sizeof(*clients));
-	//clients->data = malloc(sizeof(*clients->data));
-	//clients->next = NULL;
-	//if (asprintf(&clients->data->name, "bedrock") < 0)
-	//	goto exit_free;
-	//if (asprintf(&clients->data->chroot, "/var/chroot/bedrock") < 0)
-	//	goto exit_free;
-
-	//{ /* making a temporary block so we do not pollute the scope */
-	//	struct br_client_list *temp = malloc(sizeof(*temp));
-	//	clients->next = temp;
-	//	temp->data = malloc(sizeof(*temp->data));
-	//	temp->next = NULL;
-	//	if (asprintf(&temp->data->name, "wheezy") < 0)
-	//		goto exit_free;
-	//	if (asprintf(&temp->data->chroot, "/var/chroot/wheezy") < 0)
-	//		goto exit_free;
-
-	//	temp = malloc(sizeof(*temp));
-	//	clients->next->next = temp;
-	//	temp->data = malloc(sizeof(*temp->data));
-	//	temp->next = NULL;
-	//	if (asprintf(&temp->data->name, "arch") < 0)
-	//		goto exit_free;
-	//	if (asprintf(&temp->data->chroot, "/var/chroot/arch") < 0)
-	//		goto exit_free;
-	//}
 
 	/* Init inotify */
 	struct br_file_list *iterator = watched;
@@ -490,14 +424,14 @@ int main(int argc, const char *argv[])
 	for (int i = 0; i < inotify_count; i++) {
 		inotify_instances[i] = inotify_init();
 		if (inotify_instances[i] < 0) {
-			/* TODO obtain errno and log */
+			syslog(LOG_ERR, "%s. Unable to start inotify instances", strerror(errno));
 			goto exit_free;
 		}
 	}
 
 	file_network = add_graph_nodes(inotify_instances);
 	if (file_network == NULL) {
-		/* TODO obtain errno and log */
+		syslog(LOG_ERR, "%s. Failed to initialize sibling files.", strerror(errno));
 		goto exit_free;
 	}
 
@@ -517,7 +451,7 @@ int main(int argc, const char *argv[])
 		if (retval < 0) { /* error! */
 			if (errno == EINTR)
 				continue; /* just kidding, only a signal :D */
-			/* TODO obtain errno and log */
+			syslog(LOG_ERR, "%s. Unable to select on inotify descriptors.", strerror(errno);
 			goto exit_inotify;
 		}
 		
@@ -528,7 +462,7 @@ int main(int argc, const char *argv[])
 			if (FD_ISSET(inotify_instances[i], &fds_copy)) {
 				if (dispatch_inotify(inotify_instances[i],
 							file_network) < 0) {
-					/* TODO obtain errno and log */
+					syslog(LOG_ERR, "%s. Unable to dispatch and propagate file sync.", strerror(errno));
 					goto exit_inotify;
 				}
 			}
@@ -581,7 +515,8 @@ exit_free:
 	}
 
 just_exit:
-	perror("error");
+	syslog(LOG_WARNING, "Daemon has been stopped. Client sync will not work.");
+	closelog();
 	exit(exit_status);
 }
 
