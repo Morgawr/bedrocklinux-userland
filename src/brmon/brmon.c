@@ -31,15 +31,13 @@
 #define EVENT_BUF_SIZE (1024*EVENT_SIZE+16)
 #define MAX_LINE 512
 
+/* TODO: Maybe tidy up code moving it in different files */
+
 struct br_client {
 	char *name;
 	char *chroot;
 };
 
-/* TODO: I might want to roll out a simple list implementation
- *	 generic enough to work for both clients and files but
- *	 I honestly cannot be arsed by it at the moment
- */
 /* Simple list for watched files */
 struct br_file_list {
 	char *filename;
