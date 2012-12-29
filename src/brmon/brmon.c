@@ -451,7 +451,7 @@ int main(int argc, const char *argv[])
 		if (retval < 0) { /* error! */
 			if (errno == EINTR)
 				continue; /* just kidding, only a signal :D */
-			syslog(LOG_ERR, "%s. Unable to select on inotify descriptors.", strerror(errno);
+			syslog(LOG_ERR, "%s. Unable to select on inotify descriptors.", strerror(errno));
 			goto exit_inotify;
 		}
 		
