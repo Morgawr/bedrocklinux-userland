@@ -290,14 +290,14 @@ int init_clients()
 		if (in_client && res == 0) { /* we look for "path = blah" */
 			res = sscanf(line, " %[^= ] = %s", path, value);
 			if (res != 0 && strncmp(path,"path",5) == 0) {
-				temp->data->chroot = malloc(sizeof(value)*strlen(value));
-				strncpy(temp->data->chroot, value, strlen(value));
+				temp->data->chroot = malloc(sizeof(char)*strlen(value)+1);
+				snprintf(temp->data->chroot, strlen(value)+1, "%s", value);
 				
 				/* clean some stuff for next iteration */
 				in_client = 0;
 				memset(section,0,7);
 				memset(path,0,5);
-				memset(value,0,MAX_LINE); 
+				memset(value,0,strlen(value)*sizeof(char)); 
 				temp->next = malloc(sizeof(*temp));
 				temp->next->data = NULL;
 				temp->next->next = NULL;
@@ -323,8 +323,8 @@ int init_clients()
 			target[strlen(target)-1]='\0';
 			in_client = 1;
 			temp->data = malloc(sizeof(*temp->data));
-			temp->data->name = malloc(sizeof(target)*strlen(value));
-			strncpy(temp->data->name, target, strlen(target));
+			temp->data->name = malloc(sizeof(target)*strlen(value)+1);
+			snprintf(temp->data->name, strlen(value)+1, "%s", value);
 		}
 	}
 
@@ -452,6 +452,60 @@ int sync_filesystem() {
 	return 0;
 }
 
+/* This function initializes the watched list reading from the config file
+ * for each filename we want to watch.
+ * Returns -1 in case of error.
+ */
+int init_watched() 
+{
+	FILE *fp = fopen(CONFIG, "r");
+	char line[MAX_LINE];
+	char result[MAX_LINE];
+	if (fp == NULL)
+		return -1;
+
+
+	if (watched != NULL) {
+		/* Something else has tampered with the structure */
+		errno = EINVAL;
+		return -1;
+	}
+
+	struct br_file_list *file_it = watched = malloc(sizeof(*watched));
+	if (watched == NULL) {
+		return -1;
+	}
+	
+	while (fgets(line, MAX_LINE, fp) != NULL) {
+		if( line[0] == '#' || line[0] == ' ' || line[0] == '\n')
+			continue;
+		int res = sscanf(line,"%s", result);
+		//if (res == 0)
+		//	continue;
+		char *entry = malloc(sizeof(char)*strlen(result)+1);
+		if (entry == NULL)
+			return -1;
+		snprintf(entry, strlen(result)+1, "%s", result);
+		file_it->next = NULL;
+		file_it->filename = entry;
+		file_it->next = malloc(sizeof(file_it));
+		file_it = file_it->next;
+	}
+
+	/* Second pass */
+	struct br_file_list *tmp = watched;
+	if (file_it == watched) {
+		errno = ECANCELED; /* No need to do anything */
+		return -1;
+	}
+	while (tmp->next != file_it)
+		tmp = tmp->next;
+	free(tmp->next);
+	tmp->next = NULL;
+	fclose(fp);
+	return 0;
+}
+
 int main(int argc, const char *argv[])
 {
 	/* TODO: Use getopt to check params */
@@ -460,6 +514,7 @@ int main(int argc, const char *argv[])
 	pid_t pid, sid;
 	int exit_status = 0;
 	struct br_file_graph *file_network = NULL; /* all our file instances */
+	int null_fd = 0;
 	watched = NULL;
 	clients = NULL;
 	
@@ -483,7 +538,7 @@ int main(int argc, const char *argv[])
 
 	umask(0);
 
-	openlog("brmon", LOG_PID | LOG_NDELAY, LOG_DAEMON);
+	openlog("brmon", LOG_PID, LOG_DAEMON);
 	syslog(LOG_INFO, "Daemon started.");
 
 	sid = setsid();
@@ -494,7 +549,7 @@ int main(int argc, const char *argv[])
 	}
 
 	/* Redirect standard streams to /dev/null */
-	int null_fd = open("/dev/null", O_WRONLY);
+	null_fd = open("/dev/null", O_WRONLY);
 	dup2(null_fd, STDIN_FILENO);
 	dup2(null_fd, STDOUT_FILENO);
 	dup2(null_fd, STDERR_FILENO);
@@ -506,14 +561,10 @@ int main(int argc, const char *argv[])
 
 	/* Setup the watched list reading from config file */
 	/* TODO: read config */
-	watched = malloc(sizeof(*watched));
-	watched->next = NULL;
-	/* Temporary stuff */
-	#define FILENAME "/etc/resolv.conf"
-	watched->filename = malloc(strlen(FILENAME)+1);
-	sprintf(watched->filename,FILENAME);
-	#undef FILENAME
-
+	if (init_watched() < 0) {
+		syslog(LOG_ERR, "%s. Unable to read config file.", strerror(errno));
+		goto just_exit;
+	}
 
 	/* Populate the clients structure */
 	if (init_clients() < 0) {
