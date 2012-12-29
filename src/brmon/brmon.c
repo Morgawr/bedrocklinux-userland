@@ -377,6 +377,7 @@ int main(int argc, const char *argv[])
 	umask(0);
 
 	openlog("brmon", LOG_PID | LOG_NDELAY, LOG_DAEMON);
+	syslog(LOG_INFO, "daemon started.");
 
 	sid = setsid();
 	if (sid < 0) {
