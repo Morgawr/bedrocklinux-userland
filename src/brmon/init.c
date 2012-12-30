@@ -43,6 +43,7 @@ int init_watched()
 		if (entry == NULL)
 			return -1;
 		snprintf(entry, strlen(result)+1, "%s", result);
+		dbg("Got %s to watch", entry);
 		file_it->next = NULL;
 		file_it->filename = entry;
 		file_it->next = malloc(sizeof(file_it));
@@ -104,6 +105,8 @@ int init_clients()
 			if (res != 0 && strncmp(path,"path",5) == 0) {
 				temp->data->chroot = malloc(sizeof(char)*strlen(value)+1);
 				snprintf(temp->data->chroot, strlen(value)+1, "%s", value);
+
+				dbg("Found %s client at %s", temp->data->name, temp->data->chroot);
 				
 				/* clean some stuff for next iteration */
 				in_client = 0;

@@ -11,6 +11,12 @@
 #define EVENT_BUF_SIZE (1024*EVENT_SIZE+16)
 #define MAX_LINE 512
 
+#ifdef DEBUG
+#define dbg(...) syslog(LOG_DEBUG, __VA_ARGS__)
+#else
+#define dbg(...)
+#endif
+
 struct br_client {
 	char *name;
 	char *chroot;

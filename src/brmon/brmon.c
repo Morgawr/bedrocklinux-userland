@@ -71,18 +71,21 @@ int main(int argc, const char *argv[])
 	 * and discover all the clients available
 	 */
 
+	dbg("Initializing watched list");
 	/* Setup the watched list reading from config file */
 	if (init_watched() < 0) {
 		syslog(LOG_ERR, "%s. Unable to read config file.", strerror(errno));
 		goto just_exit;
 	}
 
+	dbg("Initializing client list");
 	/* Populate the clients structure */
 	if (init_clients() < 0) {
 		syslog(LOG_ERR, "%s. Unable to read clients.", strerror(errno));
 		goto exit_free;
 	}
 
+	dbg("Initializing inotify list");
 	/* Init inotify */
 	struct br_file_list *iterator = watched;
 	inotify_count = 0;
@@ -100,6 +103,7 @@ int main(int argc, const char *argv[])
 		}
 	}
 
+	dbg("Syncing filesystem");
 	/* Check if all the sibling files exist, if they do not then
 	 * sync them all together using the most recent stat'd modification
 	 */
@@ -108,6 +112,7 @@ int main(int argc, const char *argv[])
 		goto exit_free;
 	}
 
+	dbg("Adding nodes to graph");
 	file_network = add_graph_nodes(inotify_instances);
 	if (file_network == NULL) {
 		syslog(LOG_ERR, "%s. Failed to initialize sibling files.", strerror(errno));
@@ -120,6 +125,7 @@ int main(int argc, const char *argv[])
 	for(int i = 0; i < inotify_count; i++)
 		FD_SET(inotify_instances[i],&fds);
 
+	dbg("Entered main loop");
 	/* Enter infinite loop for daemon */
 	for (;;) {
 		fd_set fds_copy;
@@ -128,8 +134,10 @@ int main(int argc, const char *argv[])
 		int retval = select(nfds, &fds_copy, NULL, NULL, NULL);
 		
 		if (retval < 0) { /* error! */
-			if (errno == EINTR)
+			if (errno == EINTR) {
+				dbg("Received interrupt signal");
 				continue; /* just kidding, only a signal :D */
+			}
 			syslog(LOG_ERR, "%s. Unable to select on inotify descriptors.", strerror(errno));
 			goto exit_inotify;
 		}
@@ -139,6 +147,7 @@ int main(int argc, const char *argv[])
 
 		for (int i = 0; i < inotify_count; i++) {
 			if (FD_ISSET(inotify_instances[i], &fds_copy)) {
+				dbg("Found event for %d",inotify_instances[i]);
 				if (dispatch_inotify(inotify_instances[i],
 							file_network) < 0) {
 					syslog(LOG_ERR, "%s. Unable to dispatch and propagate file sync.", strerror(errno));

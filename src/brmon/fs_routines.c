@@ -25,6 +25,8 @@ static int copy_over(char *src, char *dest)
 	
 	pid = fork();
 
+	dbg("Copying %s into %s", src, dest);
+
 	if (pid == 0) { /* child */
 		execl("/bin/cp", "/bin/cp", src, dest, (char *)0);
 	}
@@ -90,6 +92,8 @@ int propagate_event(int fd, int wd, struct br_file_graph *root)
 		if (errno != ENOENT) /* something went wrong */
 			return -1;
 
+		dbg("Stray removal, replacing %s",iterator->filename);
+
 		/* Let's get the old file back from the next sibling in line,
 		 * if this one doesn't exist either then something went really
 		 * wrong and we need to exit.
@@ -109,6 +113,8 @@ int propagate_event(int fd, int wd, struct br_file_graph *root)
 	iterator->wd = inotify_add_watch(fd, iterator->filename, IN_DELETE_SELF);
 	if (iterator->wd < 0) 
 		return -1;
+
+	dbg("New %s, replacing old siblings", iterator->filename);
 
 	while (iterator != sibling) {
 		if (inotify_rm_watch(fd, sibling->wd) < 0) {
@@ -148,6 +154,7 @@ int dispatch_inotify(int fd, struct br_file_graph *root)
 	while (i < length) {
 		struct inotify_event *event = (struct inotify_event *)&buffer[i];
 		if (event->mask & IN_DELETE_SELF) {
+			dbg("Event received for file deletion");
 			if (propagate_event(fd, event->wd, root) < 0) {
 				return -1;
 			}
@@ -237,6 +244,7 @@ int sync_filesystem()
 			errno = ENOENT;
 			return -1;
 		}
+		dbg("%s has the latest modification date, re-syncing",filename);
 
 		/* We do a second pass */
 		for (i = 0; i < client_num; i++) {
