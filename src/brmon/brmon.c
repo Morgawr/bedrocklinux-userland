@@ -63,7 +63,7 @@ struct br_client_list {
  * 	memory more dynamic and react better with event distribution.
  */
 struct br_file_graph {
-	int *fd_parent; /* Inotify watching this XXX: maybe remove pointer */
+	int fd_parent; /* Inotify watching this */
 	int wd; /* Inotify watch descriptor */
 	char *filename; /* File reference */
 	struct br_client *client; /* Chroot'd client identifier */
@@ -100,12 +100,13 @@ struct br_file_graph* add_graph_nodes(int *fd)
 				return NULL;
 			if (snprintf(wholename, namelength, "%s%s", client->chroot, base) < 0)
 				return NULL;
-			graph_it->fd_parent = fd;
+			graph_it->fd_parent = *fd;
 			graph_it->wd = inotify_add_watch(*fd, wholename, IN_DELETE_SELF);
 			if (graph_it->wd < 0){
 				return NULL;
 			}
 			graph_it->filename = wholename;
+			syslog(LOG_DEBUG,"%s with %d and %d", wholename, *fd, graph_it->wd);
 			graph_it->client = client;
 			graph_it->siblings = NULL;
 			graph_it->next = NULL;
@@ -176,20 +177,18 @@ int propagate_event(int fd, int wd, struct br_file_graph *root)
 {
 	if (root == NULL) {
 		errno = EINVAL;
+		syslog(LOG_DEBUG,"root is null!");
 		return -1;
 	}
 	/* Let's look for the file in our graph */
 	struct br_file_graph *iterator = root;
 	do {
-		if (iterator->wd == wd) /* found! */
+		if (iterator->wd == wd && iterator->fd_parent == fd) 
 			break;
 		iterator = iterator->next;
 	} while(iterator != NULL);
 
-	if (iterator == NULL || (*iterator->fd_parent != fd)) {
-		/* Inconsistency error, this shouldn't happen so we just 
-		 * set errno and return.
-		 */
+	if (iterator == NULL) {
 		errno = EINVAL;
 		return -1;
 	}
@@ -560,7 +559,6 @@ int main(int argc, const char *argv[])
 	 */
 
 	/* Setup the watched list reading from config file */
-	/* TODO: read config */
 	if (init_watched() < 0) {
 		syslog(LOG_ERR, "%s. Unable to read config file.", strerror(errno));
 		goto just_exit;
@@ -641,7 +639,7 @@ int main(int argc, const char *argv[])
 exit_inotify:
 
 	for(struct br_file_graph *tmp = file_network; tmp != NULL; tmp = tmp->next) {
-		inotify_rm_watch(*tmp->fd_parent, tmp->wd);
+		inotify_rm_watch(tmp->fd_parent, tmp->wd);
 	}
 
 	/* Close inotify instances */
