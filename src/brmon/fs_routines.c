@@ -244,7 +244,7 @@ int sync_filesystem()
 			errno = ENOENT;
 			return -1;
 		}
-		dbg("%s has the latest modification date, re-syncing",filename);
+		dbg("%s has the latest modification date, re-syncing if needed",filename);
 
 		/* We do a second pass */
 		for (i = 0; i < client_num; i++) {
