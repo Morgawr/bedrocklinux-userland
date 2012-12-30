@@ -76,7 +76,35 @@ int propagate_event(int fd, int wd, struct br_file_graph *root)
 	 * all the new inodes to the inotify watcher.
 	 */
 	struct br_file_graph *sibling = iterator->siblings;
+	if (sibling == NULL) {
+		errno = EINVAL;
+		return -1;
+	}
+
+	struct stat buf;
 	
+	/* In case this goes through, it means the user manually deleted the 
+	 * file but didn't update it with a copy. We need to re-sync. 
+	 */
+	if (stat(iterator->filename, &buf) < 0) {
+		if (errno != ENOENT) /* something went wrong */
+			return -1;
+
+		/* Let's get the old file back from the next sibling in line,
+		 * if this one doesn't exist either then something went really
+		 * wrong and we need to exit.
+		 */
+		struct stat buf2;
+		if (stat(sibling->filename, &buf2) < 0) 
+			return -1;
+
+		if (copy_over(sibling->filename, iterator->filename) < 0)
+			return -1;
+
+		iterator->wd = inotify_add_watch(fd, iterator->filename, IN_DELETE_SELF);
+		return 0;
+	}
+
 	/* First we add the new file to our inotify instance */
 	iterator->wd = inotify_add_watch(fd, iterator->filename, IN_DELETE_SELF);
 	if (iterator->wd < 0) 
