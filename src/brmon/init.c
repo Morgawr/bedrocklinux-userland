@@ -18,6 +18,7 @@ int init_watched()
 	FILE *fp = fopen(CONFIG, "r");
 	char line[MAX_LINE];
 	char result[MAX_LINE];
+	memset(result,0,MAX_LINE*sizeof(char));
 	if (fp == NULL)
 		return -1;
 
@@ -34,11 +35,11 @@ int init_watched()
 	}
 	
 	while (fgets(line, MAX_LINE, fp) != NULL) {
-		if( line[0] == '#' || line[0] == ' ' || line[0] == '\n')
+		if (line[0] == '\n') 
 			continue;
-		int res = sscanf(line,"%s", result);
-		//if (res == 0)
-		//	continue;
+		int res = sscanf(line," %[^#\n]", result);
+		if (res <= 0)
+			continue;
 		char *entry = malloc(sizeof(char)*strlen(result)+1);
 		if (entry == NULL)
 			return -1;
