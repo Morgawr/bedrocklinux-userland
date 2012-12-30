@@ -52,14 +52,13 @@ static int copy_over(char *src, char *dest)
 }
 
 /* Operates on the watch descriptor handling the event of a file being 
- * modified.
+ * modified or removed.
  * Returns -1 on failure.
  */
 int propagate_event(int fd, int wd, struct br_file_graph *root)
 {
 	if (root == NULL) {
 		errno = EINVAL;
-		syslog(LOG_DEBUG,"root is null!");
 		return -1;
 	}
 	/* Let's look for the file in our graph */
@@ -106,16 +105,17 @@ int propagate_event(int fd, int wd, struct br_file_graph *root)
 		if (copy_over(sibling->filename, iterator->filename) < 0)
 			return -1;
 
-		iterator->wd = inotify_add_watch(fd, iterator->filename, IN_DELETE_SELF);
+		iterator->wd = inotify_add_watch(fd, iterator->filename, WATCH_FLAGS);
 		return 0;
 	}
 
-	/* First we add the new file to our inotify instance */
-	iterator->wd = inotify_add_watch(fd, iterator->filename, IN_DELETE_SELF);
+	/* First we re-add the file to our inotify instance */
+	inotify_rm_watch(fd, iterator->wd);
+	iterator->wd = inotify_add_watch(fd, iterator->filename, WATCH_FLAGS);
 	if (iterator->wd < 0) 
 		return -1;
 
-	dbg("New %s, replacing old siblings", iterator->filename);
+	dbg("New version of %s, replacing old siblings", iterator->filename);
 
 	while (iterator != sibling) {
 		if (inotify_rm_watch(fd, sibling->wd) < 0) {
@@ -127,7 +127,7 @@ int propagate_event(int fd, int wd, struct br_file_graph *root)
 		 */
 		if (copy_over(iterator->filename, sibling->filename) < 0)
 			return -1;
-		sibling->wd = inotify_add_watch(fd, sibling->filename, IN_DELETE_SELF);
+		sibling->wd = inotify_add_watch(fd, sibling->filename, WATCH_FLAGS);
 		sibling = sibling->siblings;
 	}
 
@@ -156,6 +156,12 @@ int dispatch_inotify(int fd, struct br_file_graph *root)
 		struct inotify_event *event = (struct inotify_event *)&buffer[i];
 		if (event->mask & IN_DELETE_SELF) {
 			dbg("Event received for file deletion");
+			if (propagate_event(fd, event->wd, root) < 0) {
+				return -1;
+			}
+		}
+		if (event->mask & IN_MODIFY) {
+			dbg("Event received for modification");
 			if (propagate_event(fd, event->wd, root) < 0) {
 				return -1;
 			}

@@ -192,7 +192,7 @@ struct br_file_graph* add_graph_nodes(int *fd)
 			if (snprintf(wholename, namelength, "%s%s", client->chroot, base) < 0)
 				return NULL;
 			graph_it->fd_parent = *fd;
-			graph_it->wd = inotify_add_watch(*fd, wholename, IN_DELETE_SELF);
+			graph_it->wd = inotify_add_watch(*fd, wholename, WATCH_FLAGS);
 			if (graph_it->wd < 0){
 				return NULL;
 			}

@@ -17,6 +17,8 @@
 #define dbg(...)
 #endif
 
+#define WATCH_FLAGS (IN_DELETE_SELF | IN_MODIFY)
+
 struct br_client {
 	char *name;
 	char *chroot;
