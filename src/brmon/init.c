@@ -180,6 +180,7 @@ struct br_file_graph* add_graph_nodes(int *fd)
 		struct br_client_list *client_it = clients;
 		struct br_file_graph *first = graph_it;
 		struct br_file_graph *box = NULL; /* previous step */
+		/* Adding siblings */
 		while (client_it != NULL) {
 			struct br_client *client = client_it->data;
 			char *wholename = NULL;
@@ -195,8 +196,8 @@ struct br_file_graph* add_graph_nodes(int *fd)
 			if (graph_it->wd < 0){
 				return NULL;
 			}
+			dbg("Watching %s",wholename);
 			graph_it->filename = wholename;
-			syslog(LOG_DEBUG,"%s with %d and %d", wholename, *fd, graph_it->wd);
 			graph_it->client = client;
 			graph_it->siblings = NULL;
 			graph_it->next = NULL;

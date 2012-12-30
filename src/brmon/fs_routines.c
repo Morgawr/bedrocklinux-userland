@@ -23,9 +23,10 @@ static int copy_over(char *src, char *dest)
 	int child_exit;
 	pid_t pid;
 	
+	dbg("Copying %s into %s", src, dest);
+
 	pid = fork();
 
-	dbg("Copying %s into %s", src, dest);
 
 	if (pid == 0) { /* child */
 		execl("/bin/cp", "/bin/cp", src, dest, (char *)0);
