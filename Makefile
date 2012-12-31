@@ -51,6 +51,7 @@ remove-unnecessary:
 	-rm bedrock-userland-1.0alpha3+daemon.tar.gz
 	-rm -rf .git
 	-rm -r src/brc
+	-rm -rf src/brmon
 	-rm README.md LICENSE Makefile
 	-rm get-bb-cmds.sh
 
