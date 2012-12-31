@@ -4,9 +4,7 @@
 # compile binaries
 all:
 	gcc -Wall src/brc/brc.c -o src/brc/brc -static -lcap
-	cd src/brmon
-	gcc -Wall brmon.c init.c fs_routines.c -std=c99 -static -o brmon
-	cd -
+	gcc -Wall src/brmon/brmon.c src/brmon/init.c src/brmon/fs_routines.c -std=c99 -static -o src/brmon/brmon
 
 # install binaries
 install:
@@ -71,9 +69,7 @@ clean:
 package:
 	# ensure brc binary is available
 	gcc -Wall src/brc/brc.c -o src/brc/brc -static -lcap
-	cd src/brmon
-	gcc -Wall brmon.c init.c fs_routines.c -std=c99 -static -o brmon
-	cd -
+	gcc -Wall src/brmon/brmon.c src/brmon/init.c src/brmon/fs_routines.c -std=c99 -static -o src/brmon/brmon
 	# ensure we're not packaging files created during development
 	-rm src/brc/brc
 	-rm src/brmon/brmon
