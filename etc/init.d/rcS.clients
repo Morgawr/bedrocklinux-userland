@@ -6,3 +6,5 @@
 #
 # Note that this is being run as a full bourne shell script; if you would like
 # to try to be fancy and attempt to parallelize things it should be quite possible.
+brc bedrock syslogd
+brc bedrock brmon
