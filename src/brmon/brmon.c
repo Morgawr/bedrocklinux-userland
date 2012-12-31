@@ -1,6 +1,22 @@
-/* This is the Bedrock daemon */
-/* TODO: get a proper description */
-/* TODO: Add GPL here */
+/* 
+ * This is brmon.c, part of the Bedrock daemon project (brmon). 
+ * This file contains the main body of the application which 
+ * has the purpose of sync'ing special files on the Bedroc
+ * Linux system between each individual client.
+ *
+ * Copyright (C) 2012 Federico 'Morgawr' Pareschi <morgawr@gmail.com> 
+ * 
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * as published by the Free Software Foundation; either version 2
+ * of the License, or (at your option) any later version.
+ * 
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ */
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <syslog.h>
