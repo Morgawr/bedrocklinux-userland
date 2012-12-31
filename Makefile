@@ -36,6 +36,7 @@ install:
 	mkdir -p usr/sbin
 	mkdir -p var/lib/urandom
 	mkdir -p var/chroot/bedrock
+	mkdir -p var/log
 	# set permissions for the entire userland
 	find . -type d -exec chmod 755 {} \;
 	find . -type f -exec chmod 644 {} \;
