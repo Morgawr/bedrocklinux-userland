@@ -34,7 +34,7 @@
  * At the moment it is implemented by spawning a child process to handle 
  * the copy. It is not as fast as a native copy but it is more stable (atm).
  * Returns -1 on error.
- * XXX: Change this to use a better copy
+ * XXX: Change this to use a better copy, maybe caching + mv/cp
  */
 static int copy_over(char *src, char *dest) 
 {
