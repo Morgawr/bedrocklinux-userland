@@ -37,7 +37,13 @@ struct br_client_list *clients;
 int main(int argc, const char *argv[])
 {
 	/* TODO: Use getopt to check params */
-	/* TODO: Check if we were called from root */
+	
+	if (getuid() != 0 && geteuid() != 0) {
+		fprintf(stderr,"Warning: this program usually requires root " 
+				"privileges to run. You're lacking the required "
+				"privileges, this daemon might not work as "
+				"intended.\n");
+	}
 
 	pid_t pid, sid;
 	int exit_status = 0;
