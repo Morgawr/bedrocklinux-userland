@@ -59,7 +59,11 @@ static int copy_over(char *src, char *dest)
 		}
 
 		if (WIFEXITED(child_exit)) {
-			return WEXITSTATUS(child_exit);
+			if (WEXITSTATUS(child_exit) != 0) {
+				errno = ECANCELED;
+				return -1;
+			}
+			return 0;
 		}
 		else if (WIFSIGNALED(child_exit) || WIFSTOPPED(child_exit)) {
 			errno = ECHILD;
