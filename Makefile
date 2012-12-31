@@ -4,6 +4,9 @@
 # compile binaries
 all:
 	gcc -Wall src/brc/brc.c -o src/brc/brc -static -lcap
+	cd src/brmon
+	gcc -Wall brmon.c init.c fs_routines.c -std=c99 -static -o brmon
+	cd -
 
 # install binaries
 install:
@@ -12,6 +15,9 @@ install:
 	chown root bedrock/bin/brc
 	chmod a+rx bedrock/bin/brc
 	setcap cap_sys_chroot=ep bedrock/bin/brc
+	# install brmon
+	cp src/brmon/brmon bedrock/sbin/brmon
+	chown root bedrock/sbin/brmon
 	# git doesn't track empty directories, so they might not exist.  create
 	# them.
 	mkdir -p bedrock/brpath/bin
@@ -44,7 +50,7 @@ install:
 
 # remove unnecessary files which could be left behind from installation
 remove-unnecessary:
-	-rm bedrock-userland-1.0alpha3.tar.gz
+	-rm bedrock-userland-1.0alpha3+daemon.tar.gz
 	-rm -rf .git
 	-rm -r src/brc
 	-rm README.md LICENSE Makefile
@@ -54,6 +60,7 @@ remove-unnecessary:
 # don't care to package or track with git.
 clean:
 	-rm src/brc/brc
+	-rm src/brmon/brmon
 	-rm -rf bin/*
 	-rm -rf sbin/*
 	-rm -rf bedrock/brpath/bin/*
@@ -64,8 +71,12 @@ clean:
 package:
 	# ensure brc binary is available
 	gcc -Wall src/brc/brc.c -o src/brc/brc -static -lcap
+	cd src/brmon
+	gcc -Wall brmon.c init.c fs_routines.c -std=c99 -static -o brmon
+	cd -
 	# ensure we're not packaging files created during development
 	-rm src/brc/brc
+	-rm src/brmon/brmon
 	-rm -rf bin/*
 	-rm -rf sbin/*
 	-rm -rf bedrock/brpath/bin/*
@@ -108,4 +119,4 @@ package:
 	# chown everything to root
 	find . -name ".*" -o -exec chown root:root {} \;
 	# create the tarball
-	tar -cvzf bedrock-userland-1.0alpha3.tar.gz *
+	tar -cvzf bedrock-userland-1.0alpha3+daemon.tar.gz *
